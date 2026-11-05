@@ -1,0 +1,29 @@
+__pycache__/
+*.py[cod]
+.venv*/
+.pytest_cache/
+build/
+logs/
+reports/
+/tests/
+/docs/rl/
+*.egg-info/
+.ruff_cache/
+*.log
+*.jsonl
+*.jsonl.gz
+.env
+.env.*
+
+# Local experiments and historical extraction records
+/VALIDATION.md
+/SOURCE_SNAPSHOT.json
+/models/l1w_rl/source_snapshot.json
+/models/l1w_rl/kinematics.xml
+/scripts/dev/
+/scripts/rl/verify_runner_parity.py
+/l1w_records/
+/records/
+
+# Obtain this dependency from the vendor; do not redistribute it here.
+/include/lowlevel/lowlevel.h

@@ -1,0 +1,4 @@
+# The NX runtime is standalone: no unilab, training framework, Hydra or RSL-RL.
+# Use the torch 2.8 CPU wheel matching NX's Python/architecture; see README.deploy.md.
+numpy>=1.26,<3
+torch>=2.8,<2.9

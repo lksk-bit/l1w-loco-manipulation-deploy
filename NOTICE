@@ -1,0 +1,12 @@
+l1w-loco-manipulation-deploy
+Copyright 2026 lksk-bit and contributors
+
+Project code is licensed under the Apache License, Version 2.0.
+Portions of the policy runtime and posture logic are adapted from
+legged-manipulation_unilab (Apache-2.0). Original attribution notices
+and models/l1w_rl/SOURCE_LICENSE are retained.
+
+The bundled policy export and its runtime contract are described in
+models/l1w_rl/SOURCE.md and the same-stem JSON metadata.
+Vendor LowLevel headers, AIRBOT SDK, XRoboToolkit SDK and SPLINE are
+external dependencies; this project's license does not relicense them.

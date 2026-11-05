@@ -1,0 +1,331 @@
+{
+  "checkpoint": "logs/ppo-mujoco-l1w/L1WArmManipLoco/2026-10-28_18-17-25_mujoco/model_19700.pt",
+  "algo": "ppo",
+  "checkpoint_sha256": "3454ad23ae0c4d6e947b3586081cd245499c21495638afe58df8923ca04bba93",
+  "policy_sha256": "1538f67c0ed3bfb53120289d46926a4b6b2e41a59275a08ba6313f9f555fdd8c",
+  "num_obs": 440,
+  "num_actions": 22,
+  "embedded_normalization": true,
+  "runtime_contract": {
+    "robot": {
+      "base_name": "BASE_LINK",
+      "home_keyframe": "home",
+      "joint_names": [
+        "FBL_ABAD_JOINT",
+        "FBL_HIP_JOINT",
+        "FBL_KNEE_JOINT",
+        "FAR_ABAD_JOINT",
+        "FAR_HIP_JOINT",
+        "FAR_KNEE_JOINT",
+        "RAR_ABAD_JOINT",
+        "RAR_HIP_JOINT",
+        "RAR_KNEE_JOINT",
+        "RBL_ABAD_JOINT",
+        "RBL_HIP_JOINT",
+        "RBL_KNEE_JOINT",
+        "FBL_FOOT_JOINT",
+        "FAR_FOOT_JOINT",
+        "RAR_FOOT_JOINT",
+        "RBL_FOOT_JOINT",
+        "joint1",
+        "joint2",
+        "joint3",
+        "joint4",
+        "joint5",
+        "joint6"
+      ],
+      "ctrl_dt": 0.02,
+      "leg_slice": [
+        0,
+        12
+      ],
+      "wheel_slice": [
+        12,
+        16
+      ],
+      "arm_slice": [
+        16,
+        22
+      ],
+      "ignore_wheel_position": true,
+      "ee_site": "endpoint",
+      "ee_goal": [
+        0.25,
+        0.0,
+        0.25
+      ],
+      "ee_goal_quaternion": [
+        0.92490906,
+        0.0,
+        0.38018842,
+        0.0
+      ],
+      "ee_workspace": {
+        "length": [
+          0.3,
+          0.6
+        ],
+        "phi": [
+          -1.2566,
+          1.0472
+        ],
+        "theta": [
+          -2.3562,
+          2.3562
+        ],
+        "collision_lower": [
+          -0.2,
+          -0.15,
+          -0.515
+        ],
+        "collision_upper": [
+          0.3,
+          0.15,
+          -0.115
+        ],
+        "underground_limit": -0.57
+      },
+      "ik": {
+        "damping": 0.05,
+        "gain": 1.0,
+        "dq_clip": 0.2,
+        "use_orientation": true
+      },
+      "gait_frequency": 2.0,
+      "feet_phase_offsets": [
+        0.0,
+        0.5,
+        0.5,
+        0.0
+      ],
+      "command_deadzone": 0.1,
+      "gait_command_deadzone": 0.05,
+      "default_dof_pos": [
+        0.0,
+        0.8,
+        -1.5,
+        0.0,
+        0.8,
+        -1.5,
+        0.0,
+        0.8,
+        -1.5,
+        0.0,
+        0.8,
+        -1.5,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.6,
+        0.0,
+        -1.6
+      ],
+      "ctrl_ranges": [
+        [
+          -0.4887,
+          0.4887
+        ],
+        [
+          -1.152,
+          2.967
+        ],
+        [
+          -2.723,
+          -0.602
+        ],
+        [
+          -0.4887,
+          0.4887
+        ],
+        [
+          -1.152,
+          2.967
+        ],
+        [
+          -2.723,
+          -0.602
+        ],
+        [
+          -0.4887,
+          0.4887
+        ],
+        [
+          -1.152,
+          2.967
+        ],
+        [
+          -2.723,
+          -0.602
+        ],
+        [
+          -0.4887,
+          0.4887
+        ],
+        [
+          -1.152,
+          2.967
+        ],
+        [
+          -2.723,
+          -0.602
+        ],
+        [
+          -28.0,
+          28.0
+        ],
+        [
+          -28.0,
+          28.0
+        ],
+        [
+          -28.0,
+          28.0
+        ],
+        [
+          -28.0,
+          28.0
+        ],
+        [
+          -3.1416,
+          2.0944
+        ],
+        [
+          -2.9671,
+          0.17452999999999985
+        ],
+        [
+          -0.08726600000000007,
+          3.1416
+        ],
+        [
+          -3.0107,
+          3.0107
+        ],
+        [
+          -1.7628,
+          1.7628
+        ],
+        [
+          -3.0107,
+          3.0107
+        ]
+      ],
+      "gait_activation_thresholds": [
+        0.5,
+        0.08,
+        0.12
+      ]
+    },
+    "arm_kp": [
+      95,
+      115,
+      100,
+      52,
+      54,
+      55
+    ],
+    "arm_kd": [
+      3.5,
+      3.8,
+      2.5,
+      1.5,
+      1.5,
+      1.5
+    ],
+    "algorithm": {
+      "num_one_step_obs": 88,
+      "num_actor_history": 5,
+      "num_actions": 22,
+      "action_scale": 0.25,
+      "wheel_action_scale": 10.0,
+      "arm_action_scale": 0.0,
+      "name": "ppo",
+      "embedded_normalization": true
+    },
+    "warmup": {
+      "ee_position": [
+        0.2914531302200378,
+        -1.316973777755421e-06,
+        0.21906002519220735
+      ],
+      "ee_quaternion": [
+        -0.999999999968715,
+        -7.479945709940208e-07,
+        7.133856601337918e-06,
+        3.3344609205718384e-06
+      ]
+    }
+  },
+  "body_reference": {
+    "path": "test_lowlevel_safe.cpp",
+    "sha256": "907afd9c0c2a4a924626b87610c5a0bfc72dfd0d876fbbc568e62e2d70622a33",
+    "bundled": false,
+    "description": "Upstream parameter reference; source is not distributed in this project."
+  },
+  "sim2sim_source": {
+    "project": "legged-manipulation_unilab-l1w",
+    "policy": "exports/policy_ppo_1028_19700.pt",
+    "snapshot_sha256": {
+      "src/legged_manipulation_unilab/simulation/runner.py": "fb7eea456deb4130f094910989d8a5aaa5dfe0920a4c92abf508bc3bc0917385",
+      "src/legged_manipulation_unilab/simulation/backends/mujoco.py": "6e5ade70e3804cb4288be84a871e9b0adbb1f23a7758c18c23853622b664f086",
+      "src/legged_manipulation_unilab/simulation/config/l1_w_arm/config.yaml": "525cf09c1278ebfed84cdbb385ceb43df2113b8bf35c10b40f0250ffaf361a04",
+      "src/legged_manipulation_unilab/assets/robots/l1_w_arm/scene_flat.xml": "a8228f185cc533c1de48390be2c4fc2133a1bb5b5e664b0ca9eeea05724cd0a5",
+      "exports/policy_ppo_1028_19700.pt": "6b7649c5904e38135b58b4e3a2ab1bf6a3bc756f46a2306edb09f6261e2da208"
+    }
+  },
+  "training_run": {
+    "config_sha256": "d53e54b54f28c6ab9743ffe1bd2bd8e84b7156caa7476993032818cf9f788320",
+    "control_config": {
+      "leg_kp": 50.0,
+      "leg_kd": 1.0,
+      "arm_action_scale": 0.0
+    },
+    "command_config": {
+      "vel_limit": [
+        [
+          -0.6,
+          -0.4,
+          -0.8
+        ],
+        [
+          1.0,
+          0.4,
+          0.8
+        ]
+      ],
+      "zero_command_prob": 0.15,
+      "pure_x_command_prob": 0.35,
+      "resample_time_s": 4.0,
+      "gait_frequency": 2.0,
+      "gait_x_threshold": 0.5,
+      "gait_lateral_threshold": 0.08,
+      "gait_yaw_threshold": 0.12
+    },
+    "ik": {
+      "damping": 0.05,
+      "gain": 1.0,
+      "dq_clip": 0.2,
+      "use_orientation": true,
+      "orientation_mode": "target"
+    },
+    "arm_stage": {
+      "freeze_arm_joints": false,
+      "disable_ee_goal_trajectory": false,
+      "fixed_ee_goal_cart": [
+        0.15,
+        0.0,
+        0.25
+      ]
+    }
+  },
+  "source_policy_sha256": "6b7649c5904e38135b58b4e3a2ab1bf6a3bc756f46a2306edb09f6261e2da208",
+  "release_packaging": {
+    "removed": "TorchScript debug source records containing workstation paths",
+    "weights_and_inference_graph": "unchanged",
+    "source_policy_sha256": "6b7649c5904e38135b58b4e3a2ab1bf6a3bc756f46a2306edb09f6261e2da208"
+  }
+}
