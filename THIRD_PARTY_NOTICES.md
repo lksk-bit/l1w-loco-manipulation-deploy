@@ -8,7 +8,7 @@ Original project contributions are licensed under [Apache-2.0](LICENSE). Attribu
 
 Portions of the policy runtime, posture logic and reference assets are adapted from `legged-manipulation_unilab`, supplied under Apache-2.0. The upstream license is retained at [models/l1w_rl/SOURCE_LICENSE](models/l1w_rl/SOURCE_LICENSE). Existing attribution comments remain in the source files.
 
-The retained October 28 policy export and its provenance are described in [models/l1w_rl/SOURCE.md](models/l1w_rl/SOURCE.md). Its JSON preserves the model/checkpoint hashes and inference contract. The project license does not grant rights in external components beyond those held by their respective contributors.
+The October 28 PPO and November 5 SuperMimic Stage 2 exports are described in [models/l1w_rl/SOURCE.md](models/l1w_rl/SOURCE.md). Their JSON files preserve model/checkpoint hashes and inference contracts. SuperMimic's network attribution and MIT terms are retained in [SUPERMIMIC_LICENSE](models/l1w_rl/SUPERMIMIC_LICENSE). The project license does not grant rights in external components beyond those held by their respective contributors.
 
 ## Vendor LowLevel interface
 

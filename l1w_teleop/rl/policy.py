@@ -14,10 +14,14 @@ from .mapping import orientation_error, quat_matrix
 class Policy:
     """TorchScript or ONNX callable with input/output dimension preflight."""
 
-    def __init__(self, path: str | Path, num_obs: int, num_actions: int):
+    def __init__(self, path: str | Path, num_obs: int, num_actions: int, *, device="cpu"):
         path = Path(path)
         if not path.is_file():
             raise ValueError(f"Exported policy does not exist: {path}")
+        if device not in ("cpu", "cuda"):
+            raise ValueError("Policy device must be cpu or cuda")
+        self.device = device
+        self.device_name = "CPU"
         self.num_obs, self.num_actions = num_obs, num_actions
         self.module: Any = None
         self.session: Any = None
@@ -26,14 +30,27 @@ class Policy:
                 import onnxruntime as ort
             except ImportError as exc:
                 raise ValueError("ONNX inference requires the export extra") from exc
+            providers = ["CPUExecutionProvider"]
+            if device == "cuda":
+                if "CUDAExecutionProvider" not in ort.get_available_providers():
+                    raise ValueError(
+                        "CUDA policy requested but ONNX Runtime has no CUDAExecutionProvider"
+                    )
+                providers.insert(0, "CUDAExecutionProvider")
+                self.device_name = "ONNX CUDAExecutionProvider"
             try:
                 self.session = ort.InferenceSession(
-                    str(path), providers=["CPUExecutionProvider"]
+                    str(path), providers=providers
                 )
             except Exception as exc:
                 raise ValueError(
                     f"Cannot load exported ONNX policy: {path}: {exc}"
                 ) from exc
+            if device == "cuda" and "CUDAExecutionProvider" not in self.session.get_providers():
+                raise ValueError("ONNX Runtime failed to initialize CUDAExecutionProvider")
+            # Do not silently recreate a failed CUDA session on CPU.
+            if device == "cuda":
+                self.session.disable_fallback()
             inputs = self.session.get_inputs()
             if len(inputs) != 1:
                 raise ValueError("Expected one obs input in exported policy")
@@ -41,11 +58,18 @@ class Policy:
         elif path.suffix == ".pt":
             import torch
 
+            if device == "cuda":
+                if not torch.cuda.is_available():
+                    raise ValueError(
+                        "CUDA policy requested but torch.cuda.is_available() is false; "
+                        "install the Jetson CUDA-enabled PyTorch runtime or use --device cpu"
+                    )
+                self.device_name = torch.cuda.get_device_name(0)
             try:
-                self.module = torch.jit.load(str(path), map_location="cpu").eval()
+                self.module = torch.jit.load(str(path), map_location=device).eval()
             except (RuntimeError, ValueError) as exc:
                 raise ValueError(
-                    f"Expected an exported TorchScript policy: {path}"
+                    f"Cannot load exported TorchScript policy on {device}: {path}: {exc}"
                 ) from exc
         else:
             raise ValueError(
@@ -75,7 +99,12 @@ class Policy:
             import torch
 
             with torch.inference_mode():
-                result = self.module(torch.from_numpy(obs[None, :])).numpy()
+                tensor = torch.from_numpy(obs[None, :])
+                if self.device == "cuda":
+                    tensor = tensor.to("cuda")
+                # Returning to CPU waits for the complete CUDA result. Runtime
+                # stage timing therefore includes copies and synchronization.
+                result = self.module(tensor).cpu().numpy()
         action = np.asarray(result, dtype=np.float32)
         if action.shape != (1, self.num_actions) or not np.isfinite(action).all():
             raise ValueError(
@@ -109,7 +138,7 @@ class ObservationHistory:
         return self.frames.reshape(-1).copy()
 
 class PolicyCore:
-    def __init__(self, cfg, policy=None, *, arm_observation_reference=None):
+    def __init__(self, cfg, policy=None, *, arm_observation_reference=None, device="cpu"):
         self.cfg, self.robot, self.algo = cfg, cfg["robot"], cfg["algorithm"]
         self.default = np.asarray(self.robot["default_dof_pos"], dtype=float)
         self.observation_reference = self.default.copy()
@@ -122,9 +151,13 @@ class PolicyCore:
         self.kd = np.asarray(self.robot["kd"], dtype=float)
         # MuJoCo wheel gains stay defined by the XML; preserve those velocity-servo gains.
         self.kd[12:16] = self.robot["wheel_kv"]
-        self.policy = policy or Policy(self.algo["policy"], 440, 22)
-        self.history = ObservationHistory(5, 88)
-        self.frame = np.zeros(88, dtype=np.float32)
+        self.supermimic = self.algo.get("name") == "supermimic"
+        frame_size = self.algo["num_one_step_obs"]
+        history_length = self.algo["num_actor_history"]
+        num_inputs = frame_size * history_length + self.algo.get("num_goal_obs", 0)
+        self.policy = policy or Policy(self.algo["policy"], num_inputs, 22, device=device)
+        self.history = ObservationHistory(history_length, frame_size)
+        self.frame = np.zeros(frame_size, dtype=np.float32)
         self.last_action = np.zeros(22, dtype=np.float32)
         self.velocity = np.zeros(3, dtype=np.float32)
         self.phase = np.zeros(4, dtype=np.float32)
@@ -155,6 +188,8 @@ class PolicyCore:
         self.gait_phase = 0.0
 
     def observation(self, state):
+        if self.supermimic:
+            return self._supermimic_observation(state)
         f = self.frame
         f[0:3] = state["local_ang_vel"]
         f[3:6] = state["projected_gravity"]
@@ -168,6 +203,22 @@ class PolicyCore:
         f[63:66] = state["ee_position"] - self.ee_target
         f[66:88] = self.last_action
         return self.history.append(f)
+
+    def _supermimic_observation(self, state):
+        # Source L1WSuperMimicMDP.obs(): joint-relative positions, velocities,
+        # gyro, gravity, executed previous action, then the current command.
+        # The goal encoder also receives that same current command separately.
+        f = self.frame
+        f[:22] = state["joint_pos"] - self.observation_reference
+        f[12:16] = 0
+        f[22:44] = state["joint_vel"]
+        f[44:47] = state["local_ang_vel"]
+        f[47:50] = state["projected_gravity"]
+        f[50:72] = self.last_action
+        f[72:75] = self.velocity
+        f[75:79] = self.phase
+        f[79:82] = self.ee_target
+        return np.concatenate((self.history.append(f), f[72:82]))
 
     def arm_delta(self, state, jac_pos, jac_rot):
         rotation = quat_matrix(state["arm_ref_quaternion"]).T
@@ -229,6 +280,12 @@ class PolicyCore:
         action = np.asarray(action, dtype=np.float32)
         if action.shape != (22,) or not np.isfinite(action).all():
             raise ValueError("policy must produce 22 finite actions")
+        if self.supermimic:
+            # Match the source bridge projection BEFORE storing action history:
+            # wheel commands saturate at +/-2.8 and Stage 2 arm motion is IK-only.
+            action = action.copy()
+            action[12:16] = np.clip(action[12:16], -2.8, 2.8)
+            action[16:22] = 0
         q, dq = self.default.copy(), np.zeros(22, dtype=float)
         q[:12] += action[:12] * self.algo["action_scale"]
         dq[12:16] = action[12:16] * self.algo["wheel_action_scale"]
@@ -259,12 +316,24 @@ class PolicyCore:
             )
         )
         if gait_active:
-            self.gait_phase = (
-                self.gait_phase + self.robot["ctrl_dt"] * self.robot["gait_frequency"]
-            ) % 1
-            self.phase[:] = (
-                self.gait_phase + np.asarray(self.robot["feet_phase_offsets"])
-            ) % 1
+            increment = self.robot["ctrl_dt"] * self.robot["gait_frequency"]
+            if self.supermimic:
+                # Real SuperMimic playback accumulates/wraps phase in float32.
+                # Match it before feeding phase into both actor inputs.
+                self.gait_phase = float(np.fmod(
+                    np.float32(self.gait_phase) + np.float32(increment),
+                    np.float32(1.0),
+                ))
+                self.phase[:] = np.fmod(
+                    np.float32(self.gait_phase)
+                    + np.asarray(self.robot["feet_phase_offsets"], dtype=np.float32),
+                    np.float32(1.0),
+                )
+            else:
+                self.gait_phase = (self.gait_phase + increment) % 1
+                self.phase[:] = (
+                    self.gait_phase + np.asarray(self.robot["feet_phase_offsets"])
+                ) % 1
         else:
             self.gait_phase = 0
             self.phase.fill(0)

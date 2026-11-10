@@ -118,7 +118,7 @@ def blend(ratio):
 
 
 class FSMController:
-    """Two-stage runner stand using model or raw hardware targets."""
+    """Two-stage get-up and optionally direct RL-to-stand return."""
 
     def __init__(self, cfg, core, initial=None, passive_kd=None, stand=None):
         self.cfg = cfg["states"]
@@ -129,6 +129,10 @@ class FSMController:
         )
         self.duration = float(self.cfg["transition_seconds"])
         self.hip_duration = float(self.cfg["hip_return_seconds"])
+        self.rl_return_single_stage = self.cfg.get("rl_return_single_stage", True)
+        if not isinstance(self.rl_return_single_stage, bool):
+            raise ValueError("rl_return_single_stage must be boolean")
+        self.stand_two_stage = True
         self.gain_duration = float(self.cfg.get("gain_transition_seconds", 0.3))
         self.stable_duration = float(self.cfg.get("settle_seconds", 0.3))
         self.require_settling = self.cfg.get("require_stand_settling", True)
@@ -200,6 +204,11 @@ class FSMController:
         self.generation += 1
 
     def _enter_stand(self, q, now):
+        # Capture the source state before switching to STAND. Only a direct
+        # locomotion return skips abad alignment; passive/recovery still get up.
+        self.stand_two_stage = not (
+            self.state == State.LOCOMOTION and self.rl_return_single_stage
+        )
         # Last submitted goal preserves target continuity. Feedback settling,
         # when enabled, uses measurements rather than these target positions.
         if self.last is None or self.state == State.PASSIVE:
@@ -213,7 +222,8 @@ class FSMController:
         self.origin_feedforward[3::4] = 0
         self.hip_pose = self.origin[0].copy()
         self.hip_pose[:12:3] = self.home[:12:3]
-        self.state, self.phase = State.STAND, "hip_return"
+        self.state = State.STAND
+        self.phase = "hip_return" if self.stand_two_stage else "direct_return"
         self.entered, self.stable_since = now, None
         self.deadline = now + self.timeout if self.require_settling else None
         self._reset_policy()
@@ -274,7 +284,10 @@ class FSMController:
         if self.state != State.STAND:
             return
         elapsed = now - self.entered
-        self.phase = "hip_return" if elapsed < self.hip_duration else "rise"
+        self.phase = (
+            ("hip_return" if elapsed < self.hip_duration else "rise")
+            if self.stand_two_stage else "direct_return"
+        )
         if elapsed < self.duration:
             return
         ready = not self.require_settling
@@ -326,7 +339,10 @@ class FSMController:
             return q.copy(), np.zeros(22), np.zeros(22), self.passive_kd.copy()
         if self.state == State.STAND:
             elapsed = now - self.entered
-            if elapsed <= self.hip_duration:
+            if not self.stand_two_stage:
+                start, goal = self.origin[0], self.home
+                ratio = elapsed / self.duration
+            elif elapsed <= self.hip_duration:
                 start, goal = self.origin[0], self.hip_pose
                 ratio = elapsed / self.hip_duration
             else:
@@ -373,6 +389,7 @@ class FSMController:
         self.hold_reason = None
         self.entered = self.stable_since = self.deadline = None
         self.last = self.origin = self.hip_pose = None
+        self.stand_two_stage = True
         self.feedforward.fill(0)
         self.origin_feedforward.fill(0)
         self._reset_policy()

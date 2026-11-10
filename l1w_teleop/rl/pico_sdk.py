@@ -19,6 +19,7 @@ STATUS_FD_ENV = "L1W_RL_PICO_STATUS_FD"
 @dataclass
 class SourceState:
     timestamp_ns: int = 0
+    headset_pose: tuple = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
     left_pose: tuple = (0.0,) * 7
     right_pose: tuple = (0.0,) * 7
     left_grip: float = 0.0
@@ -83,6 +84,7 @@ class XRobotToolkitSource(InputSource):
         xrt = self._xrt
         return SourceState(
             timestamp_ns=int(xrt.get_time_stamp_ns()),
+            headset_pose=tuple(xrt.get_headset_pose()),
             left_pose=tuple(xrt.get_left_controller_pose()),
             right_pose=tuple(xrt.get_right_controller_pose()),
             left_grip=float(xrt.get_left_grip()),
@@ -116,6 +118,7 @@ class PicoInputMonitor:
         local_ns = time.monotonic_ns()
         fingerprint = (
             state.timestamp_ns,
+            state.headset_pose,
             state.left_pose,
             state.right_pose,
             state.left_grip,
@@ -162,7 +165,12 @@ class PicoInputMonitor:
                     axis_click=axis_click,
                 )
             )
-        return TeleopInputs(left=frames[0], right=frames[1]), stale
+        headset_pose = tuple(state.headset_pose)
+        if len(headset_pose) != 7 or not all(_finite(v) for v in headset_pose):
+            headset_pose = None
+        return TeleopInputs(
+            left=frames[0], right=frames[1], headset_pose=headset_pose
+        ), stale
 
     def close(self):
         self._source.close()
@@ -326,14 +334,15 @@ def sdk_child():
     monitor = None
     status = os.fdopen(int(os.environ[STATUS_FD_ENV]), "wb", buffering=0)
     os.set_blocking(status.fileno(), False)
-    # Match the original hardware entry point: one-to-one translation with the
-    # SDK return-zero orientation held fixed. Input/targets here use SDK frames.
+    # Headset yaw steers horizontal hand increments; SDK return-zero tool
+    # orientation stays fixed. Input/targets here use SDK frames.
     # RL observes both arm state/goal and body velocity; keep both input paths
     # enabled together instead of stopping locomotion when the grip is held.
     mapper = InputMapping(
         MappingConfig(
             allow_return_zero=False,
             lock_orientation=True,
+            follow_headset_yaw=True,
             arm_motion_stops_dog=False,
         )
     )
@@ -398,6 +407,9 @@ def sdk_child():
                     "right_stick_click": bool(inputs.right.axis_click),
                     "gripper_open_request": gripper_open,
                     "right_pose": inputs.right.pose,
+                    "headset_pose": inputs.headset_pose,
+                    "headset_yaw_rad": mapper._headset_yaw,
+                    "headset_yaw_ready": mapper._headset_yaw is not None,
                     "arm_reference_ready": current_pose is not None,
                 },
             }

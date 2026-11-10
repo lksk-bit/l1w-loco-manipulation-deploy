@@ -176,7 +176,7 @@ TASK_RUN="keyboard-$(date +%Y%m%d-%H%M%S)-$$"
 
 ## 7. PICO 按键
 
-先按左 X 完成站立，再操作其他控制。当前配置的两阶段站立共2秒：外展归位1秒、站起1秒。
+先按左 X 完成站立，再操作其他控制。当前配置的两阶段站立共2秒：外展归位1秒、站起1秒。 RL 返回 stand 默认使用2秒单阶段三次插值，从最后下发目标直接过渡到站姿；`stand.rl_return_single_stage=false` 可恢复两阶段。passive 起立和 hold 恢复仍采用两阶段。
 
 | 按键 | 功能 |
 | --- | --- |
@@ -193,6 +193,8 @@ stand 和 RL 都支持机械臂、夹爪控制；passive/hold 不发送臂爪运
 夹爪按键不需要同时按住右 Grip；开合同时按下时闭合优先。
 按住右 Grip 不会暂停底盘，RL 下可同时操作底盘与机械臂。
 右摇杆按键用于闭合夹爪，不用于机械臂回零。
+
+机械臂水平操作轴跟随头显 yaw；上下方向与锁定末端姿态保持不变。仅累计新增手柄位移，转头不会旋转已累计目标。yaw 使用100 ms平滑时间常数和0.5°死区，跨越±180°时沿最短角更新；接近竖直视线时保持最后有效水平轴。头显跟踪无效时暂停跟随，恢复后重新建立参考，不补发中断位移。需在 XRoboToolkit 启用头部跟踪；底盘摇杆映射保持不变。
 
 ## 8. 键盘按键
 
@@ -225,7 +227,7 @@ stand 和 RL 都支持机械臂、夹爪控制；passive/hold 不发送臂爪运
 | `arm.return_zero_on_exit` | Ctrl+C 后是否请求机械臂 SDK 回零 |
 
 `--policy` 优先于配置中的 `model`，只影响本次启动。
-公开仓库仅提供并默认使用以下模型及同名元数据：
+默认使用以下 PPO 模型及同名元数据：
 
 ```text
 models/l1w_rl/policy_ppo_1028_19700.pt
@@ -236,6 +238,19 @@ models/l1w_rl/policy_ppo_1028_19700.json
 PPO / HIM-PPO 加载能力保留；其他兼容模型需要自行提供 `440 → 22` TorchScript 文件及同名 JSON。公开仓库不附带历史模型、本机实验报告和来源快照。
 
 相对模型路径以工程根目录解析；更换模型后重启 NX RL，不在运行中热切换。
+### SuperMimic Stage 2
+
+仓库附带 `policy_supermimic_20261105_20000.pt`、`policy_supermimic_20261110_20000.pt` 及同名 JSON。使用 `--policy` 选择，默认 PPO 模型不变：
+
+```bash
+cd ~/ws/l1w-loco-manipulation-deploy
+.venv-rl/bin/python -m l1w_teleop.rl \
+  --mode hardware --pico --arm-control \
+  --policy models/l1w_rl/policy_supermimic_20261110_20000.pt
+```
+
+仅测试底盘时，将 `--arm-control` 替换为 `--trial`。SuperMimic 输入为82维×10帧历史加10维当前目标，共830维，输出22维动作；内置观测与目标归一化。部署仅加载 actor，机械臂仍由 AIRBOT Cartesian/IK 控制。当前 SuperMimic 腿部 Kp/Kd 为40/1，轮子 Kd 为0.7；参数由 `rl_gains.by_algorithm.supermimic` 选择。模型来源与运行契约见[来源说明](models/l1w_rl/SOURCE.md)。
+
 夹爪 `speed_m_s` 单位 m/s，开闭使用相同速度；当前部署配置为0.05，开度范围0～0.072m。
 程序不根据夹爪电流/接触状态停止开合，AIRBOT 原生驱动保护仍由服务端和固件负责。
 
@@ -285,7 +300,7 @@ journalctl -k -n 100 --no-pager
 | 更新被拒绝 | 两端常驻控制进程是否已各自退出 |
 
 当前底盘周期：策略/指令50Hz，UDP状态反馈目标500Hz，桥接电机循环1000Hz。
-周期与 ACK 超时退出已关闭。PICO / 机械臂输入反馈过期及桥接命令断流按现有逻辑进入 hold，恢复后需人工重新请求站立；真实硬故障按常驻会话恢复流程处理。实现分别位于 [NX 控制循环](l1w_teleop/rl/controller.py)、[姿态状态机](l1w_teleop/rl/body.py) 和 [RK3588 桥接](src/lowlevel_bridge.cpp)。
+周期与 ACK 超时退出已关闭。PICO 输入过期和桥接命令断流进入 hold，恢复后需重新请求站立。机械臂掉线、反馈过期或启用臂控时实测关节超限，仅暂停臂爪控制：底盘 RL 保留最后有效臂部观测，臂速置零、末端目标冻结，底盘关节和 IMU 继续实时更新。启动仍需至少一帧有效臂部反馈；恢复后需松开再握住右 Grip。限位数值保持不变。实现分别位于 [NX 控制循环](l1w_teleop/rl/controller.py)、[姿态状态机](l1w_teleop/rl/body.py) 和 [RK3588 桥接](src/lowlevel_bridge.cpp)。
 
 ## 12. 首次环境准备与模型维护
 
@@ -323,6 +338,29 @@ python3.10 ~/l1w-nx-torch28-cpu/install.py \
 
 该安装包安装 Python 依赖，不提供 AIRBOT / XRoboToolkit SDK，不配置 CAN、SPLINE 或设备服务。日常代码更新保留 `.venv-rl`，无需重复安装。
 
+### GPU 推理
+
+CLI 默认 `--device cuda`，也可显式指定 `--device cpu`。CUDA 不可用时直接报错，不静默切回 CPU；TorchScript 保持 float32。JetPack 6.2 / CUDA 12.6 的离线环境包在开发机准备：
+
+```bash
+python3 scripts/rl/prepare_nx_offline.py --jetson-cu126
+scp build/l1w-nx-torch28-cu126.tar.gz robot@192.168.234.234:~/
+```
+
+在 NX 安装：
+
+```bash
+cd ~
+tar -xzf l1w-nx-torch28-cu126.tar.gz
+bash ~/l1w-nx-torch28-cu126/install_nx_gpu_runtime.sh
+python3.10 ~/l1w-nx-torch28-cu126/install.py \
+  --project ~/ws/l1w-loco-manipulation-deploy
+cd ~/ws/l1w-loco-manipulation-deploy
+.venv-rl/bin/python -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
+```
+
+CPU 离线环境也可使用，但启动时需增加 `--device cpu`。ONNX GPU 推理另需提供 `CUDAExecutionProvider` 的 ONNX Runtime；部分不支持的算子仍可能分配给 CPU。
+
 ### 离线检查与手工打包
 
 在开发机执行，不连接机器人：
@@ -331,7 +369,7 @@ python3.10 ~/l1w-nx-torch28-cpu/install.py \
 cd ~/Projects/l1w-loco-manipulation-deploy
 mkdir -p reports
 .venv-rl/bin/python -m l1w_teleop.rl \
-  --mode benchmark --steps 100 --report reports/benchmark.json
+  --mode benchmark --device cpu --steps 100 --report reports/benchmark.json
 .venv-rl/bin/python scripts/rl/prepare_update.py
 ```
 
@@ -365,3 +403,13 @@ python3 scripts/rl/import_sim_policy.py \
 导入 HIM-PPO 时增加 `--algo him_ppo` 并指定对应的 `policy_him_ppo_*.pt`。
 工具接收已导出的策略及同名 JSON，检查哈希和 `440 → 22` 运行契约，并写入 `models/l1w_rl/`；训练 checkpoint 需先在源工程完成导出。
 生成模型及配套 JSON 后，更新 NX 并用 `--policy` 选择。
+
+SuperMimic 可直接从 checkpoint 或运行目录导出。使用安装了训练工程依赖的 Python 环境：
+
+```bash
+python3 scripts/rl/import_sim_policy.py --algo supermimic --stage stage2 \
+  --source /path/to/supermimic-training \
+  --policy logs/path/to/run/ckpt_020000.pt
+```
+
+导入器只导出 actor，生成同名 JSON 并核对源端与部署端契约；部署运行不依赖训练工程。已有且内容不同的导出不会被覆盖。

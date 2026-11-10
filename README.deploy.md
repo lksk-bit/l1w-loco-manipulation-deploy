@@ -159,7 +159,7 @@ TASK_RUN="keyboard-$(date +%Y%m%d-%H%M%S)-$$"
 
 ## 7. PICO controls
 
-Press left X to stand before using other controls. The configured stand trajectory takes 2 seconds: 1 second of abad alignment and 1 second of rise.
+Press left X to stand before using other controls. The configured stand trajectory takes 2 seconds: 1 second of abad alignment and 1 second of rise. RL-to-stand uses one 2-second cubic transition from the last submitted target by default. Set `stand.rl_return_single_stage=false` for two stages. Get-up from passive and recovery from hold retain two stages.
 
 | Control | Behavior |
 | --- | --- |
@@ -173,6 +173,8 @@ Press left X to stand before using other controls. The configured stand trajecto
 | Right B | Request descent to passive; keep the process resident |
 
 Stand and RL both support arm/gripper control. Passive/hold do not send arm/gripper motion targets. Gripper buttons do not require right Grip; close takes precedence if both open and close are held. Right Grip does not pause locomotion. Right stick click closes the gripper; it does not request arm zero.
+
+Horizontal arm translation follows headset yaw; vertical motion and locked tool orientation stay unchanged. Only new hand displacement is integrated, so head rotation does not rotate an accumulated target. Yaw uses a 100 ms smoothing time constant, a 0.5-degree deadband and shortest-arc updates across ±180 degrees. Near-vertical gaze retains the last valid axes. Invalid head tracking pauses following; recovery reanchors without replaying missed movement. Enable head tracking in XRoboToolkit. Chassis joystick mapping is unchanged.
 
 ## 8. Keyboard controls
 
@@ -203,7 +205,7 @@ Daily settings live in [configs/rl/deploy.json](configs/rl/deploy.json).
 | `arm.gripper` | Opening limits and open/close speed |
 | `arm.return_zero_on_exit` | Request AIRBOT SDK zero on client shutdown |
 
-Only the following model is bundled and selected by default:
+The following PPO model remains selected by default:
 
 ```text
 models/l1w_rl/policy_ppo_1028_19700.pt
@@ -212,7 +214,20 @@ models/l1w_rl/policy_ppo_1028_19700.json
 
 This export comes from the October 28 run's `model_19700.pt`. Training leg Kp/Kd was 50/1; hardware configuration remains 40/1. The model metadata activates gait when `|vx| > 0.5`, `|vy| > 0.08` or `|yaw| > 0.12`.
 
-`--policy` overrides the default for that launch. Compatible PPO / HIM-PPO exports remain supported through a 440-input, 22-action TorchScript interface and same-stem JSON contract. Additional models must be supplied separately. Relative model paths resolve from the project root; restart NX RL to change models.
+`--policy` overrides the default for that launch. Compatible PPO / HIM-PPO exports remain supported through a 440-input, 22-action TorchScript interface and same-stem JSON contract. Relative model paths resolve from the project root; restart NX RL to change models.
+
+### SuperMimic Stage 2
+
+Bundled exports include `policy_supermimic_20261105_20000.pt` and `policy_supermimic_20261110_20000.pt`, with same-stem JSON contracts. Select one with `--policy`; the default PPO model is unchanged:
+
+```bash
+cd ~/ws/l1w-loco-manipulation-deploy
+.venv-rl/bin/python -m l1w_teleop.rl \
+  --mode hardware --pico --arm-control \
+  --policy models/l1w_rl/policy_supermimic_20261110_20000.pt
+```
+
+For a body-only trial, replace `--arm-control` with `--trial`. SuperMimic consumes 82 values × 10 history frames plus 10 current goal values (830 total), and produces 22 actions with embedded observation/goal normalization. Deployment loads only the actor; AIRBOT retains Cartesian/IK arm control. Current leg Kp/Kd is 40/1 and wheel Kd is 0.7, selected through `rl_gains.by_algorithm.supermimic`. See [source notes](models/l1w_rl/SOURCE.md) for provenance and runtime contracts.
 
 Gripper speed is `arm.gripper.speed_m_s`, currently 0.05 m/s in both directions. Opening ranges from 0 to 0.072 m. Application-level current/contact detection does not stop gripper motion; vendor driver and firmware protections remain external.
 
@@ -258,7 +273,7 @@ journalctl -k -n 100 --no-pager
 | RK3588 hard fault | Latest report's `fault_reason` and `first_fault` |
 | Update refused | Exit the resident control process on each host |
 
-Policy/commands run at 50 Hz; state feedback targets 500 Hz; the bridge motor loop runs at 1000 Hz. Cycle and ACK timeout exits are disabled. Stale PICO/arm feedback and command-stream interruptions follow the existing hold behavior and require a new stand request after recovery. Implementation: [NX controller](l1w_teleop/rl/controller.py), [body state machine](l1w_teleop/rl/body.py), [RK3588 bridge](src/lowlevel_bridge.cpp).
+Policy/commands run at 50 Hz; state feedback targets 500 Hz; the bridge motor loop runs at 1000 Hz. Cycle and ACK timeout exits are disabled. Stale PICO input and command-stream interruptions enter hold and require a new stand request after recovery. Arm disconnects, stale feedback or measured joints outside SDK bounds with arm control enabled stop only arm/gripper commands. Chassis RL uses the last valid arm pose with zero arm velocity and a frozen tool goal; chassis joints and IMU remain live. Startup requires an initial valid arm sample. Release and re-hold right Grip after recovery. Numerical joint limits are unchanged. Implementation: [NX controller](l1w_teleop/rl/controller.py), [body state machine](l1w_teleop/rl/body.py), [RK3588 bridge](src/lowlevel_bridge.cpp).
 
 ## 12. Environment setup and model import
 
@@ -293,6 +308,29 @@ python3.10 ~/l1w-nx-torch28-cpu/install.py \
 
 The installer supplies Python dependencies, not AIRBOT / XRoboToolkit SDKs, CAN setup or device services. Check all imports before starting hardware control. Daily code updates preserve the environment.
 
+### GPU inference
+
+The CLI defaults to `--device cuda`; use `--device cpu` for CPU inference. CUDA initialization errors do not silently fall back to CPU. TorchScript remains float32. Prepare the JetPack 6.2 / CUDA 12.6 offline bundle on the development PC:
+
+```bash
+python3 scripts/rl/prepare_nx_offline.py --jetson-cu126
+scp build/l1w-nx-torch28-cu126.tar.gz robot@192.168.234.234:~/
+```
+
+Install on NX:
+
+```bash
+cd ~
+tar -xzf l1w-nx-torch28-cu126.tar.gz
+bash ~/l1w-nx-torch28-cu126/install_nx_gpu_runtime.sh
+python3.10 ~/l1w-nx-torch28-cu126/install.py \
+  --project ~/ws/l1w-loco-manipulation-deploy
+cd ~/ws/l1w-loco-manipulation-deploy
+.venv-rl/bin/python -c 'import torch; assert torch.cuda.is_available(); print(torch.cuda.get_device_name(0))'
+```
+
+CPU offline environments require `--device cpu` at launch. ONNX GPU inference separately requires ONNX Runtime with `CUDAExecutionProvider`; unsupported operators may still run on CPU.
+
 ### Offline checks and manual packaging
 
 On the development PC, with the vendor header supplied:
@@ -301,7 +339,7 @@ On the development PC, with the vendor header supplied:
 cd ~/Projects/l1w-loco-manipulation-deploy
 mkdir -p reports
 .venv-rl/bin/python -m l1w_teleop.rl \
-  --mode benchmark --steps 100 --report reports/benchmark.json
+  --mode benchmark --device cpu --steps 100 --report reports/benchmark.json
 .venv-rl/bin/python scripts/rl/prepare_update.py
 ```
 
@@ -329,3 +367,13 @@ python3 scripts/rl/import_sim_policy.py \
 ```
 
 For a compatible HIM-PPO export, add `--algo him_ppo`. The importer consumes an exported policy and matching JSON, checks hashes and the `440 → 22` contract, and writes them to `models/l1w_rl/` with portable provenance paths. Export raw training checkpoints in the source project first. Update NX and select the imported model with `--policy`.
+
+SuperMimic supports direct export from a checkpoint or run directory. Use a Python environment with the training project's dependencies:
+
+```bash
+python3 scripts/rl/import_sim_policy.py --algo supermimic --stage stage2 \
+  --source /path/to/supermimic-training \
+  --policy logs/path/to/run/ckpt_020000.pt
+```
+
+The importer exports only the actor, writes a matching JSON and checks the source/deployment contract. Runtime operation does not depend on the training project. Different existing exports are not overwritten.

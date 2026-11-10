@@ -100,6 +100,10 @@ def parse_args(argv=None):
     parser.add_argument("--report", type=Path)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument(
+        "--device", choices=["cpu", "cuda"], default="cuda",
+        help="Policy inference device (default: cuda); use cpu explicitly for CPU-only environments",
+    )
+    parser.add_argument(
         "--export-bridge-profile",
         type=Path,
         help="Validate calibrated profile and export, no control",
@@ -188,9 +192,9 @@ def create_controller(args):
         control.args.trial and control.cfg["algorithm"]["name"] == "him_ppo"
     )
     control.core = (
-        PolicyCore(control.cfg, arm_observation_reference=np.zeros(6))
+        PolicyCore(control.cfg, arm_observation_reference=np.zeros(6), device=control.args.device)
         if control.trial_him_arm_zero_reference
-        else PolicyCore(control.cfg)
+        else PolicyCore(control.cfg, device=control.args.device)
     )
     control.base_state = synthetic_state(control.cfg)
     for _ in range(10):
@@ -228,6 +232,11 @@ def open_resources(control, on_stop):
     print(
         f"Policy: {control.cfg['algorithm']['name']} {control.cfg['algorithm']['policy']} "
         f"sha256={control.cfg['algorithm']['sha256']}",
+        flush=True,
+    )
+    print(
+        f"Policy device: {getattr(control.core.policy, 'device', control.args.device)} "
+        f"({getattr(control.core.policy, 'device_name', 'custom policy')})",
         flush=True,
     )
     print(
@@ -271,7 +280,9 @@ def open_resources(control, on_stop):
         print(
             f"Hardware body: {control.args.body_config} sha256={control.body.sha256}; "
             f"two-stage cubic stand: abad {control.body.hip_seconds:g}s + "
-            f"rise {control.body.seconds - control.body.hip_seconds:g}s; local lie/descent then passive",
+            f"rise {control.body.seconds - control.body.hip_seconds:g}s; "
+            f"RL return: {'single-stage' if control.fsm.rl_return_single_stage else 'two-stage'} "
+            f"{control.fsm.duration:g}s; local lie/descent then passive",
             flush=True,
         )
     if control.args.trial:

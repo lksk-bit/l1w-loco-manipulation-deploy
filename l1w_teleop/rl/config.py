@@ -57,6 +57,7 @@ REFERENCE_STATES = {
     "initial": "passive",
     "transition_seconds": 1.5,
     "hip_return_seconds": 0.5,
+    "rl_return_single_stage": True,
     "leg_kp": 60.0,
     "leg_kd": 2.0,
     "stand": "home",
@@ -132,7 +133,7 @@ def policy_settings(document):
     robot, algorithm = contract["robot"], contract["algorithm"]
     algo = metadata.get("algo", "ppo")
     embedded_normalization = metadata.get("embedded_normalization")
-    if algo not in ("ppo", "him_ppo"):
+    if algo not in ("ppo", "him_ppo", "supermimic"):
         raise ValueError(f"unsupported deployment policy algorithm: {algo!r}")
     if not isinstance(embedded_normalization, bool):
         raise ValueError(  # noqa: TRY004 - Invalid metadata value.
@@ -142,6 +143,8 @@ def policy_settings(document):
         raise ValueError("PPO policy requires embedded observation normalization")
     if algo == "him_ppo" and embedded_normalization:
         raise ValueError("HIM-PPO policy must consume raw observation history")
+    if algo == "supermimic" and not embedded_normalization:
+        raise ValueError("SuperMimic requires embedded observation and goal normalization")
     gains = copy.deepcopy(document["rl_gains"])
     # Keep deployment defaults shared; per-algorithm overrides replace only
     # the gains explicitly listed for that policy family.
@@ -178,6 +181,9 @@ def policy_settings(document):
     )
     states = dict(REFERENCE_STATES)
     states["gain_transition_seconds"] = document["stand"]["gain_transition_seconds"]
+    states["rl_return_single_stage"] = document["stand"].get(
+        "rl_return_single_stage", True
+    )
     return {
         "robot": robot,
         "algorithm": algorithm,
@@ -333,10 +339,18 @@ def load_config(path=None, *, policy=None):
         document["model"] = str(policy)
     cfg = policy_settings(document)
     a, r = cfg["algorithm"], cfg["robot"]
-    if (a["num_one_step_obs"], a["num_actor_history"], a["num_actions"]) != (88, 5, 22):
-        raise ValueError(
-            "this deployment supports only the verified 88 x 5 -> 22 contract"
-        )
+    dimensions = (a["num_one_step_obs"], a["num_actor_history"], a["num_actions"])
+    if a.get("name") == "supermimic":
+        if (
+            dimensions != (82, 10, 22)
+            or a.get("num_goal_obs") != 10
+            or a.get("observation_layout") != "supermimic_l1w_v1"
+            or float(a["arm_action_scale"]) != 0.0
+            or float(a["wheel_action_scale"]) != 10.0
+        ):
+            raise ValueError("SuperMimic requires the 82 x 10 + 10 -> 22 IK-only contract")
+    elif dimensions != (88, 5, 22) or a.get("num_goal_obs", 0) != 0:
+        raise ValueError("PPO/HIM-PPO requires the verified 88 x 5 -> 22 contract")
     if (r["leg_slice"], r["wheel_slice"], r["arm_slice"]) != (
         [0, 12],
         [12, 16],
@@ -345,13 +359,15 @@ def load_config(path=None, *, policy=None):
         raise ValueError("invalid policy joint slices")
     if float(r["ctrl_dt"]) != 0.02:
         raise ValueError("verified policy requires 20 ms control period")
-    if a.get("name") not in ("ppo", "him_ppo"):
+    if a.get("name") not in ("ppo", "him_ppo", "supermimic"):
         raise ValueError("unsupported policy algorithm")
     if not isinstance(a.get("embedded_normalization"), bool):
         raise ValueError(  # noqa: TRY004 - Invalid metadata value.
             "policy normalization contract is missing"
         )
     states = cfg["states"]
+    if not isinstance(states.get("rl_return_single_stage", True), bool):
+        raise ValueError("rl_return_single_stage must be boolean")
     if states["initial"] not in ("passive", "stand", "locomotion"):
         raise ValueError("invalid initial FSM state")
     if not isinstance(states.get("require_stand_settling", True), bool):

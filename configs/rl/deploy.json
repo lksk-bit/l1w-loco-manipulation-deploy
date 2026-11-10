@@ -14,6 +14,10 @@
     "leg_kd": 1.0,
     "wheel_kd": 0.7,
     "by_algorithm": {
+      "supermimic": {
+        "leg_kp": 40.0,
+        "leg_kd": 1.0
+      },
       "him_ppo": {
         "leg_kp": 50.0,
         "leg_kd": 1.0
@@ -33,6 +37,7 @@
     "wheel_feedforward": [0.0, 0.0, 0.0, 0.0],
     "duration_seconds": 2.0,
     "hip_return_seconds": 1.0,
+    "rl_return_single_stage": true,
     "gain_transition_seconds": 0.3
   },
   "rest": {

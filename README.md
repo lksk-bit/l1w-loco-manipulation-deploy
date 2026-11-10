@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Standalone deployment for L1-W locomotion and AIRBOT manipulation, with RL policy inference, PICO teleoperation, and an NX–RK3588 control pipeline.
 
-**50 Hz policy inference · PPO / HIM-PPO support · PICO / keyboard input · Arm and gripper control**
+**50 Hz policy inference · PPO / HIM-PPO / SuperMimic · PICO / keyboard input · Arm and gripper control**
 
 [Quick start](#quick-start) · [Deployment guide](README.deploy.md) · [Configuration](configs/rl/deploy.json) · [License](LICENSE)
 
@@ -15,7 +15,7 @@ Standalone deployment for L1-W locomotion and AIRBOT manipulation, with RL polic
 - Use a two-stage standing trajectory and a persistent LowLevel control session.
 - Package matching NX code and RK3588 profiles, and record feedback, targets, observations and actions.
 
-The repository includes the October 28 PPO export, `policy_ppo_1028_19700.pt`. HIM-PPO loading remains supported; no HIM model is bundled. Runtime operation does not import the training or sim2sim project. Device SDKs, services and the vendor LowLevel header are external dependencies.
+The repository includes the default October 28 PPO export and November 5 / November 10 SuperMimic Stage 2 exports, each with a matching JSON runtime contract. HIM-PPO loading remains supported; no HIM model is bundled. Runtime operation does not import the training or sim2sim project. Device SDKs, services and the vendor LowLevel header are external dependencies.
 
 ## Architecture
 
@@ -52,10 +52,14 @@ python3 -m venv .venv-rl
 .venv-rl/bin/python -m pip install -r requirements-rl.txt
 mkdir -p reports
 .venv-rl/bin/python -m l1w_teleop.rl \
-  --mode benchmark --steps 100 --report reports/benchmark.json
+  --mode benchmark --device cpu --steps 100 --report reports/benchmark.json
 ```
 
 The report should contain `steps_recorded: 100` and `writes: 0`. This synthetic check exercises inference without connecting to a robot; it does not measure physical tracking performance. If `venv` reports a missing `ensurepip`, install the venv package matching your chosen Python interpreter. An existing compatible environment can also be used by its full Python path.
+
+The CLI defaults to CUDA GPU inference. The offline development check explicitly uses `--device cpu`; NX requires CUDA-enabled PyTorch. See the [deployment guide](README.deploy.md) for installation.
+
+Horizontal arm translation follows headset yaw with smoothing and a deadband. Turning the head does not move the target of a stationary hand. Chassis joystick mapping is unchanged.
 
 ## Deploy to the robot
 

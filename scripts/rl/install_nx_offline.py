@@ -32,6 +32,13 @@ GPU_LIBRARIES = (
 
 def check_gpu_libraries():
     missing = []
+    # The pinned cuSPARSELt build uses C++ symbols without declaring a
+    # libstdc++ dependency. Load it before the standalone ctypes preflight;
+    # importing PyTorch normally brings in the C++ runtime itself.
+    try:
+        ctypes.CDLL("libstdc++.so.6", mode=ctypes.RTLD_GLOBAL)
+    except OSError as error:
+        missing.append(f"libstdc++.so.6: {error}")
     for name in GPU_LIBRARIES:
         try:
             ctypes.CDLL(name)

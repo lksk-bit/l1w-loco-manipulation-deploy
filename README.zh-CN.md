@@ -4,7 +4,7 @@
 
 L1-W 轮足底盘与 AIRBOT G2 机械臂的 loco-manipulation 部署工程：在 NX 上运行运动策略和 PICO 遥操作，在 RK3588 上执行底盘控制。
 
-**50 Hz 策略推理 · PPO / HIM-PPO · PICO / 键盘输入 · 机械臂与夹爪控制**
+**50 Hz 策略推理 · PPO / HIM-PPO / SuperMimic · PICO / 键盘输入 · 机械臂与夹爪控制**
 
 [快速开始](#快速开始) · [双端部署](README.deploy.zh-CN.md) · [配置](configs/rl/deploy.json) · [第三方来源](THIRD_PARTY_NOTICES.md)
 
@@ -15,7 +15,7 @@ L1-W 轮足底盘与 AIRBOT G2 机械臂的 loco-manipulation 部署工程：在
 - 使用键盘进行底盘调试，记录关节反馈、控制目标、观测和动作。
 - 一条命令打包并更新 NX / RK3588，生成配套的底盘 profile。
 
-部署运行不依赖训练或 sim2sim 工程。仓库附带 2026 年 10 月 28 日的 PPO 模型及其运行契约；HIM-PPO 加载能力保留，未附带 HIM 模型。设备 SDK、SPLINE 服务和厂商 LowLevel 头文件需自行准备。
+部署运行不依赖训练或 sim2sim 工程。仓库附带默认的 2026 年 10 月 28 日 PPO 模型，以及 11 月 5 日、11 月 10 日 SuperMimic Stage 2 模型及同名 JSON 运行契约；HIM-PPO 加载能力保留，未附带 HIM 模型。设备 SDK、SPLINE 服务和厂商 LowLevel 头文件需自行准备。
 
 ## 系统组成
 
@@ -52,12 +52,16 @@ python3 -m venv .venv-rl
 
 mkdir -p reports
 .venv-rl/bin/python -m l1w_teleop.rl \
-  --mode benchmark --steps 100 \
+  --mode benchmark --device cpu --steps 100 \
   --report reports/benchmark.json
 ```
 
 成功时会输出模型路径及 SHA-256，报告中的 `steps_recorded` 为 `100`、`writes` 为 `0`。
 `benchmark` 使用合成状态检查推理链路，不代表仿真运动效果或实机性能。
+
+CLI 默认使用 CUDA GPU 推理。开发机离线检查显式使用 `--device cpu`；NX 需要支持 CUDA 的 PyTorch，安装方法见[部署说明](README.deploy.zh-CN.md)。
+
+机械臂水平平移轴跟随头显 yaw，采用平滑和死区处理；转头不会移动静止手柄对应的末端目标。底盘摇杆映射保持不变。
 
 ## 部署到机器人
 

@@ -156,7 +156,7 @@ class ArmSnapshot:
 
 
 class ArmFeedback:
-    """Keep last measurements for support states, never authorize stale inference."""
+    """Cache the last valid arm pose for body RL; freshness authorizes arm IO."""
 
     def __init__(self):
         self.snapshot = None
@@ -165,7 +165,7 @@ class ArmFeedback:
         self.error = "waiting for AIRBOT feedback"
         self.disconnects = 0
 
-    def update(self, worker, now_ns=None):
+    def update(self, worker, now_ns=None, *, joint_bounds=None):
         sample = worker.snapshot()
         if now_ns is None:
             now_ns = time.monotonic_ns()
@@ -177,6 +177,17 @@ class ArmFeedback:
             sample is None or not 0 <= now_ns - sample.sampled_ns <= CONTROL_TIMEOUT_NS
         ):
             error = "AIRBOT feedback stale/unavailable"
+        if error is None and joint_bounds is not None:
+            lower, upper = (np.asarray(v) for v in joint_bounds)
+            bad = np.flatnonzero((sample.q < lower) | (sample.q > upper))
+            if bad.size:
+                details = "; ".join(
+                    f"J{i + 1}={sample.q[i]:+.5f} rad, "
+                    f"range=[{lower[i]:+.5f}, {upper[i]:+.5f}], "
+                    f"excess={max(lower[i] - sample.q[i], sample.q[i] - upper[i]):.5f} rad"
+                    for i in bad
+                )
+                error = "AIRBOT measured joints exceed SDK bounds: " + details
         available = error is None
         self.lost = self.available and (interrupted or not available)
         self.available, self.error = available, error

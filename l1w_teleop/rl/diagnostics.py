@@ -197,6 +197,7 @@ def cycle_record(control, cycle, arm_command_state):
         "mapping_profile_sha256": control.mapping.sha256,
         "policy_algorithm": control.cfg["algorithm"]["name"],
         "policy_sha256": control.cfg["algorithm"]["sha256"],
+        "policy_device": getattr(control.core.policy, "device", control.args.device),
         "trial": control.args.trial,
         "arm_observation_reference": control.core.observation_reference[16:22].copy(),
         "joint_pos": control.state["joint_pos"].copy(),
@@ -246,6 +247,12 @@ def cycle_record(control, cycle, arm_command_state):
         if control.arm and control.snapshot is not None
         else None,
         "arm_available": control.arm_feedback.available if control.arm else None,
+        "arm_observation_frozen": bool(
+            control.arm is not None
+            and control.arm_feedback.snapshot is not None
+            and not control.arm_feedback.available
+        ),
+        "arm_reengage_required": control.arm_reengage_required,
         "arm_error": control.arm_feedback.error if control.arm else None,
         "arm_control_state": control.arm.control_state
         if control.args.arm_control
@@ -270,6 +277,8 @@ def deployment_report(control):
         "policy": control.cfg["algorithm"]["policy"],
         "policy_algorithm": control.cfg["algorithm"]["name"],
         "policy_sha256": control.cfg["algorithm"]["sha256"],
+        "policy_device": getattr(control.core.policy, "device", control.args.device),
+        "policy_device_name": getattr(control.core.policy, "device_name", None),
         "body_profile_sha256": control.body.sha256 if control.body else None,
         "mapping_profile_sha256": control.mapping.sha256,
         "imu_quaternion_order": control.mapping.imu_order(control.last_frame)
@@ -282,6 +291,8 @@ def deployment_report(control):
             "hip_return_seconds": control.fsm.hip_duration,
             "rise_seconds": control.fsm.duration - control.fsm.hip_duration,
             "total_seconds": control.fsm.duration,
+            "rl_return_single_stage": control.fsm.rl_return_single_stage,
+            "active_two_stage": control.fsm.stand_two_stage,
         }
         if control.fsm
         else None,

@@ -25,6 +25,7 @@ class ControllerFrame:
 class TeleopInputs:
     left: ControllerFrame
     right: ControllerFrame
+    headset_pose: Optional[tuple] = None  # XR xyz + xyzw, in controller tracking space.
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,9 @@ class MappingConfig:
     pose_translation_scale: float = 1.0
     # XRoboToolkit headset-to-world convention. AIRBOT x/y/z <- VR -z/-x/y.
     pose_translation_axes: tuple = ((2, -1.0), (0, -1.0), (1, 1.0))
+    follow_headset_yaw: bool = False
+    headset_yaw_smoothing_s: float = 0.10
+    headset_yaw_deadband_rad: float = math.radians(0.5)
     lock_orientation: bool = False
     # SDK end_link orientation at the zero pose. Joint 6 can be rotated to make
     # the gripper horizontal only after the arm leaves the zero-pose IK branch;
@@ -105,6 +109,9 @@ class InputMapping:
     def __init__(self, config: Optional[MappingConfig] = None):
         self._config = config or MappingConfig()
         self._pose_anchor = None
+        self._previous_controller_position = None
+        self._headset_yaw = None
+        self._headset_yaw_ns = None
         self._last_pose_target = None
         self._arm_engaged = False
         self._gripper_target = self._config.gripper_initial
@@ -219,6 +226,9 @@ class InputMapping:
         current_arm_pose: Optional[PosePair],
     ) -> ArmCommand:
         config = self._config
+        head_yaw = self._update_headset_yaw(inputs) if config.follow_headset_yaw else None
+        if config.follow_headset_yaw and head_yaw is None:
+            input_healthy = False
         self._update_arm_engagement(inputs, input_healthy)
         gripper = self._gripper_command(inputs)
         if (
@@ -227,6 +237,7 @@ class InputMapping:
             or len(inputs.right.pose) != 7
         ):
             self._pose_anchor = None
+            self._previous_controller_position = None
             if self._last_pose_target is None and current_arm_pose is not None:
                 self._last_pose_target = (
                     tuple(float(v) for v in current_arm_pose[0]),
@@ -257,15 +268,29 @@ class InputMapping:
                 arm_orientation,
             )
             self._last_pose_target = (arm_position, arm_orientation)
+            self._previous_controller_position = controller_position
 
         anchor_cp, anchor_cq, anchor_ap, anchor_aq = self._pose_anchor
+        reference_cp = (
+            self._previous_controller_position if config.follow_headset_yaw else anchor_cp
+        )
         delta_p = tuple(
-            (controller_position[source] - anchor_cp[source])
+            (controller_position[source] - reference_cp[source])
             * sign
             * config.pose_translation_scale
             for source, sign in config.pose_translation_axes
         )
-        desired_p = tuple(anchor_ap[i] + delta_p[i] for i in range(3))
+        if config.follow_headset_yaw:
+            # Integrate only new hand displacement. Rotating the axes must never
+            # rotate the accumulated offset or move a stationary hand's target.
+            c, s = math.cos(head_yaw), math.sin(head_yaw)
+            dx, dy, dz = delta_p
+            delta_p = (c * dx + s * dy, -s * dx + c * dy, dz)
+            reference_ap = self._last_pose_target[0]
+            self._previous_controller_position = controller_position
+        else:
+            reference_ap = anchor_ap
+        desired_p = tuple(reference_ap[i] + delta_p[i] for i in range(3))
 
         if config.lock_orientation:
             desired_q = _unit_quaternion(config.lock_orientation_target)
@@ -288,6 +313,43 @@ class InputMapping:
             enabled=True,
             mode="pose",
         )
+
+    def _update_headset_yaw(self, inputs):
+        pose = inputs.headset_pose
+        if (
+            pose is None or len(pose) != 7
+            or not all(math.isfinite(v) for v in pose)
+            or sum(v * v for v in pose[3:]) < 1e-12
+        ):
+            self._headset_yaw = self._headset_yaw_ns = None
+            return None
+        x, y, z, w = _unit_quaternion(pose[3:])
+        # Project headset local -Z forward into the XR horizontal X/Z plane.
+        # After the existing (-z,-x,y) mapping, heading is atan2(left,forward).
+        forward, left = 1 - 2 * (x * x + y * y), 2 * (x * z + w * y)
+        if math.hypot(forward, left) < 0.1:
+            # Heading is ill-conditioned looking almost vertically up/down.
+            # Keep the last valid axes; if none exist, wait for a valid heading.
+            self._headset_yaw_ns = inputs.right.local_monotonic_ns
+            return self._headset_yaw
+        yaw = math.atan2(left, forward)
+        now = inputs.right.local_monotonic_ns
+        if self._headset_yaw is None:
+            self._headset_yaw = yaw
+        else:
+            error = math.atan2(
+                math.sin(yaw - self._headset_yaw), math.cos(yaw - self._headset_yaw)
+            )
+            dt = max(0.0, (now - self._headset_yaw_ns) / 1e9)
+            if abs(error) > self._config.headset_yaw_deadband_rad:
+                tau = self._config.headset_yaw_smoothing_s
+                alpha = -math.expm1(-dt / tau) if tau > 0 else 1.0
+                self._headset_yaw += alpha * error
+                self._headset_yaw = math.atan2(
+                    math.sin(self._headset_yaw), math.cos(self._headset_yaw)
+                )
+        self._headset_yaw_ns = now
+        return self._headset_yaw
 
     def _update_arm_engagement(self, inputs: TeleopInputs, enabled: bool) -> None:
         config = self._config

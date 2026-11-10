@@ -6,7 +6,11 @@ Portions of the policy runtime and posture logic are adapted from
 legged-manipulation_unilab (Apache-2.0). Original attribution notices
 and models/l1w_rl/SOURCE_LICENSE are retained.
 
-The bundled policy export and its runtime contract are described in
+SuperMimic network components are derived from work licensed under MIT:
+Copyright (c) 2026 ETH Zurich, Chong Zhang.
+The full notice is retained in models/l1w_rl/SUPERMIMIC_LICENSE.
+
+The bundled policy exports and their runtime contracts are described in
 models/l1w_rl/SOURCE.md and the same-stem JSON metadata.
 Vendor LowLevel headers, AIRBOT SDK, XRoboToolkit SDK and SPLINE are
 external dependencies; this project's license does not relicense them.

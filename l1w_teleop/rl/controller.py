@@ -100,6 +100,7 @@ class Controller:
         self.pico_rl_enabled = False
         self.ee_initialized = False
         self.arm_was_active = False
+        self.arm_reengage_required = False
         self.passive_generation = -1
         self.passive_sequence = 0
         self.state = self.base_state
@@ -320,13 +321,15 @@ class Controller:
                     k: self.base_state[k] for k in ("ee_position", "ee_quaternion")
                 }
             else:
-                self.arm_feedback.update(self.arm)
+                self._update_arm_feedback()
                 self.snapshot = self.arm_feedback.snapshot
                 if self.snapshot is not None:
                     self.arm_ages.append(
                         (time.monotonic_ns() - self.snapshot.sampled_ns) / 1e6
                     )
                     self.arm_polls.append(self.snapshot.poll_ms)
+                    # ArmFeedback retains the last valid pose on loss. Feed
+                    # zero arm speed rather than replaying a stale motion rate.
                     aq = self.snapshot.q
                     adq = (
                         self.snapshot.dq if self.arm_feedback.available else np.zeros(6)
@@ -336,33 +339,23 @@ class Controller:
                         self.snapshot.position, self.snapshot.quaternion_xyzw
                     )
                 else:
-                    # Body-only support bookkeeping, never policy input.
+                    # No valid arm sample has ever arrived; do not infer yet.
                     aq = self.base_state["joint_pos"][16:]
                     adq = np.zeros(6)
                     extra = {
                         k: self.base_state[k] for k in ("ee_position", "ee_quaternion")
                     }
-                if self.args.arm_control and self.arm_feedback.available:
-                    arm_lower = np.asarray(self.mapping.config["arm_raw_lower"])
-                    arm_upper = np.asarray(self.mapping.config["arm_raw_upper"])
-                    bad_joints = np.flatnonzero(
-                        (self.snapshot.q < arm_lower) | (self.snapshot.q > arm_upper)
-                    )
-                    if bad_joints.size:
-                        details = "; ".join(
-                            f"J{i + 1}={self.snapshot.q[i]:+.5f} rad, "
-                            f"range=[{arm_lower[i]:+.5f}, {arm_upper[i]:+.5f}], "
-                            f"excess={max(arm_lower[i] - self.snapshot.q[i], self.snapshot.q[i] - arm_upper[i]):.5f} rad"
-                            for i in bad_joints
-                        )
-                        raise RuntimeError(
-                            "AIRBOT measured joints exceed SDK bounds: " + details
-                        )
                 if self.arm_feedback.available and not self.ee_initialized:
                     self.core.ee_target[:] = extra["ee_position"]
                     self.core.ee_quat[:] = extra["ee_quaternion"]
                     self.ee_initialized = True
                 if not self.arm_feedback.available or self.arm_feedback.lost:
+                    if self.arm_feedback.snapshot is not None and not (
+                        self.args.arm_control
+                        and self.arm.control_state == "preparing"
+                        and self.arm.error is None
+                    ):
+                        self.arm_reengage_required = True
                     self.ee_initialized = False
                     if self.arm_was_active:
                         self.arm.hold_current()
@@ -399,6 +392,14 @@ class Controller:
                 }
         self.ages.append(cycle.state_age)
         self.stages.mark("feedback")
+
+    def _update_arm_feedback(self):
+        # Validate before replacing the cache, including the pre-send poll.
+        bounds = (
+            (self.mapping.config["arm_raw_lower"], self.mapping.config["arm_raw_upper"])
+            if self.args.arm_control else None
+        )
+        return self.arm_feedback.update(self.arm, joint_bounds=bounds)
 
     def _read_pico(self, cycle):
         cycle.pico_arm_enabled = None
@@ -439,7 +440,18 @@ class Controller:
                     cycle.gripper_open_request = pico_inputs.get("gripper_open_request")
                     if cycle.gripper_open_request is not None:
                         cycle.gripper_open_request = bool(cycle.gripper_open_request)
-                cycle.pico_arm_enabled = command.arm.enabled
+                if (
+                    self.arm_reengage_required
+                    and self.arm_feedback.available
+                    and not self.arm_feedback.lost
+                    and not command.arm.enabled
+                ):
+                    # A processed Grip release resets the child mapper's anchor.
+                    # Do not replay hand displacement accumulated while offline.
+                    self.arm_reengage_required = False
+                cycle.pico_arm_enabled = (
+                    command.arm.enabled and not self.arm_reengage_required
+                )
                 if command.motion_mode == "motion":
                     was_motion = self.pico_motion
                     self.pico_motion = True
@@ -465,7 +477,7 @@ class Controller:
                     if (
                         self.args.arm_control
                         and self.arm_feedback.available
-                        and command.arm.enabled
+                        and cycle.pico_arm_enabled
                     ):
                         goal = self.mapping.arm_pose.read(
                             command.arm.position, command.arm.orientation
@@ -508,6 +520,7 @@ class Controller:
             self.arm is not None
             and (not self.arm_feedback.available or self.arm_feedback.lost)
             and not cycle.arm_preparing
+            and self.arm_feedback.snapshot is None
         ):
             self.core.velocity.fill(0)
             if (
@@ -540,11 +553,13 @@ class Controller:
                 and self.passive_sequence > 0
                 and cycle.frame.accepted_command >= self.passive_sequence,
                 descending=bool(cycle.frame.flags & wire.DESCENDING),
-                policy_ready=not self.args.arm_control
-                or (
-                    self.arm.control_state == "ready"
-                    and self.arm_feedback.available
-                    and not self.arm_feedback.lost
+                policy_ready=self.arm is None or (
+                    self.arm_feedback.snapshot is not None
+                    and (
+                        not self.args.arm_control
+                        or (not self.arm_feedback.available and not cycle.arm_preparing)
+                        or (self.arm.control_state == "ready" and not self.arm_feedback.lost)
+                    )
                 ),
             )
             if self.generation != self.fsm.generation:
@@ -587,8 +602,10 @@ class Controller:
         self.stages.mark("fsm")
 
     def _infer(self, cycle):
+        # A cached arm pose is sufficient for chassis inference. Freshness is
+        # still mandatory for physical arm commands, checked again in _send.
         if (self.fsm is None or self.fsm.running_policy) and (
-            self.arm is None or self.arm_feedback.available
+            self.arm is None or self.arm_feedback.snapshot is not None
         ):
             if self.fsm is None:
                 self.state_name, self.state_phase = "locomotion", "policy"
@@ -651,46 +668,20 @@ class Controller:
             if self.arm is not None and (
                 self.fsm.running_policy or cycle.arm_target is not None
             ):
-                # Recheck immediately before sending: never apply an action
-                # computed with arm feedback that has since expired/failed.
-                fresh = self.arm_feedback.update(self.arm)
+                # Recheck the arm independently. Chassis actions remain usable
+                # with the cached arm pose; stale feedback only cancels arm IO.
+                fresh = self._update_arm_feedback()
                 if (
                     not fresh
                     or self.arm_feedback.lost
                     or time.monotonic_ns() - self.snapshot.sampled_ns
                     > wire.CONTROL_TIMEOUT_NS
                 ):
-                    cycle.policy_drop_reason = self.arm_feedback.error or (
-                        "AIRBOT feedback interrupted or observation aged beyond 100 ms"
-                    )
-                    self.fsm.hold(self.state["joint_pos"], cycle.policy_drop_reason)
-                    cycle.q, cycle.dq, cycle.kp, cycle.kd = self.fsm.command(
-                        self.state, cycle.now
-                    )
-                    cycle.targets = self.mapping.write(
-                        cycle.q, cycle.dq, cycle.kp, cycle.kd
-                    )
-                    cycle.targets[:, 4] = self.fsm.feedforward
-                    self.state_name, self.state_phase = (
-                        self.fsm.state.value,
-                        self.fsm.phase,
-                    )
                     cycle.arm_target = None
+                    self.arm_reengage_required = True
                     if self.arm_was_active:
                         self.arm.hold_current()
                     self.arm_was_active = self.ee_initialized = False
-                    self.passive_generation, self.passive_sequence = (
-                        self.fsm.generation,
-                        self.sequence,
-                    )
-                    cycle.packet = wire.pack_command(
-                        self.session,
-                        self.sequence,
-                        time.monotonic_ns(),
-                        cycle.frame,
-                        cycle.targets,
-                        mode=wire.ACTIVE,
-                    )
             require_fresh_command(time.monotonic_ns(), cycle.received)
             self.pending_sends[self.sequence] = time.monotonic_ns()
             # ACKs are diagnostic only. Bound retained timestamps even if
